@@ -1,29 +1,84 @@
-from random import gauss
-from theano import function, scan
-from theano.tensor import iscalar, fscalar, ivector, fvector, imatrix, fmatrix
+from random import uniform, gauss, choice, randint
+from math import pow, sin
 
-class data_generator():
+class DataGenerator():
 	
-	_noise_mu = 0
-	_noise_sigma = 1
-
-
-	def __init__(self, len):
-		pass
-
-	def _noise(self):
-		return gauss(self._noise_mu, self._noise_sigma)
-
-	def uniform_function(self, K, noise_factor):
-		x = ivector('x')
-		y = (x/x) * K * (1 + self._noise() * noise_factor)
-		f = scan([x], y)
-		return f
-
-	def power_function(self, K, noise_factor):
-		x = iscalar('x')
-
+	func = ("uniform", "linear", "power", "sin")
+	
+	def __init__(self, len, count):
+		self.len = len
+		self.count = count
+		
+	def noise(self):
+		noise_avg = 0
+		noise_std = 1
+		return gauss(noise_avg, noise_std)
+		
+	def uniform_function(self, x, noise_factor, K):
+		y = K * (1 + self.noise() * noise_factor)
+		if y < 0:
+			y = 0
+		return y
+		
+	def linear_function(self, x, noise_factor, K, bias, phase):
+		y = K * (1 + self.noise() * noise_factor) * (x - phase) + bias
+		if y < 0:
+			y = 0
+		return y
+		
+	def power_function(self, x, noise_factor, K, bias, phase, exp):
+		y = K * (1 + self.noise() * noise_factor) * pow(x - phase, exp) + bias
+		if y < 0:
+			y = 0
+		return y
+	
+	def sin_function(self, x, noise_factor, K, bias, phase):
+		y = K * (sin(x - phase) + self.noise() * noise_factor) + bias
+		if y < 0:
+			y = 0
+		return y
+	
+	def signal_iterator(self, func_id):
+		signal = []
+		# The proportion of noise could not over 30% of signal.
+		noise_factor = uniform(0, 0.3)
+		# Factor of any kind of function, used to amplify or minify the signal.
+		K = uniform(-1000, 1000)
+		# Bias of any kind of function, used to shift the signal to up(increase) or down(decrease). 
+		# The proportion of absolute value of bias could not over 100% of signal.
+		bias = randint(0, 5000)
+		# Phase of any kind of function(Except uniform function), used to shift the signal to left(backward) or right(forward).
+		phase = uniform(-10, 10)
+		# Exponent of power funtion
+		exp = randint(-10,10)
+		for x in range(0, self.len):
+			if func_id == 0:
+				y = self.uniform_function(x, noise_factor, abs(K))
+			elif func_id == 1:
+				y = self.linear_function(x, noise_factor, K, bias, phase)
+			elif func_id == 2:
+				y = self.power_function(x, noise_factor, K, bias, phase, exp)
+			elif func_id == 3:
+				y = self.sin_function(x, noise_factor, K, bias, phase)
+			else:
+				y = -1
+			signal.append(int(y))
+		return signal
+		
+	def generate(self):
+		dataset = []
+		func_info = []
+		for i in range(0, self.count):
+			func_id = choice(range(0, 4))
+			func_info.append(self.func[func_id])
+			dataset.append(self.signal_iterator(func_id))
+		return dataset, func_info
+		
 if __name__ == "__main__":
-	dg = data_generator(0)
-	uf = dg.uniform_function(5, 0.01)
-	print uf([1, 2, 3, 4])
+	dg = DataGenerator(50, 20)
+	ds1, funcs1 = dg.generate()
+	print funcs1
+	for d in ds1:
+		print d
+	
+		
