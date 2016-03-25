@@ -61,9 +61,9 @@ def build_rbm(v, W, bv, bh, k):
         # mean_v = T.nnet.sigmoid(T.dot(h, W.T) + bv)
         # v = rng.binomial(size=mean_v.shape, n=1, p=mean_v,
         #                  dtype=theano.config.floatX)
-        poisson_lambda_h = abs(T.dot(v, W)) #T.log(bh) +
+        poisson_lambda_h = abs(T.dot(v, W)) + abs(bh)
         h = rng.poisson(size=poisson_lambda_h.shape, lam=poisson_lambda_h, dtype=theano.config.floatX)
-        poisson_lambda_v = abs(T.dot(h, W.T)) #T.log(bv) +
+        poisson_lambda_v = abs(T.dot(h, W)) + abs(bv)
         v = rng.poisson(size=poisson_lambda_v.shape, lam=poisson_lambda_v, dtype=theano.config.floatX)
 
         return poisson_lambda_v, v
@@ -82,7 +82,7 @@ def build_rbm(v, W, bv, bh, k):
             vi_factorial, _ = theano.scan(fn=lambda vi: T.gamma(vi),
                                           outputs_info=None,
                                           sequences=v)
-            return - (v * bv).sum() - vi_factorial.sum() + (h * bh).sum()# + T.dot(T.dot(h.T, W), v).sum()
+            return - (v * bv).sum() - vi_factorial.sum() + (h * bh).sum() + T.dot(W, h).sum()
 
         result = 0
         for h in list(itertools.product([0, 1], repeat=3)):
