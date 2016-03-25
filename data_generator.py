@@ -77,11 +77,7 @@ class DataGenerator():
 
 def generate_one_node_dataset(T, c_num):
     dg = DataGenerator(T, c_num)
-
     dataset, func = dg.generate()
-    for data in np.array(dataset).T:
-        print data
-
     return np.array(dataset).T
 
 def generate_multi_nodes_dataset(n_num, T, c_num):

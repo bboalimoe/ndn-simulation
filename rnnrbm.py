@@ -17,6 +17,9 @@ import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
 
+
+theano.config.exception_verbosity="high"
+
 #Don't use a python long as this don't work on 32 bits computers.
 numpy.random.seed(0xbeef)
 rng = RandomStreams(seed=numpy.random.randint(1 << 30))
@@ -58,15 +61,14 @@ def build_rbm(v, W, bv, bh, k):
         # mean_v = T.nnet.sigmoid(T.dot(h, W.T) + bv)
         # v = rng.binomial(size=mean_v.shape, n=1, p=mean_v,
         #                  dtype=theano.config.floatX)
-        poisson_lambda_h = T.log(bh) + T.dot(v, W)
+        poisson_lambda_h = abs(T.dot(v, W)) #T.log(bh) +
         h = rng.poisson(size=poisson_lambda_h.shape, lam=poisson_lambda_h, dtype=theano.config.floatX)
-        poisson_lambda_v = T.log(bv) + T.dot(h, W.T)
+        poisson_lambda_v = abs(T.dot(h, W.T)) #T.log(bv) +
         v = rng.poisson(size=poisson_lambda_v.shape, lam=poisson_lambda_v, dtype=theano.config.floatX)
 
         return poisson_lambda_v, v
 
-    chain, updates = theano.scan(lambda v: gibbs_step(v)[1], outputs_info=[v],
-                                 n_steps=k)
+    chain, updates = theano.scan(lambda v: gibbs_step(v)[1], outputs_info=[v], n_steps=k)
     v_sample = chain[-1]
 
     poisson_lambda_v = gibbs_step(v_sample)[0]
@@ -80,7 +82,7 @@ def build_rbm(v, W, bv, bh, k):
             vi_factorial, _ = theano.scan(fn=lambda vi: T.gamma(vi),
                                           outputs_info=None,
                                           sequences=v)
-            return - (v * bh).sum() - vi_factorial.sum() + (h * bv).sum() + (h.T * W * v).sum()
+            return - (v * bv).sum() - vi_factorial.sum() + (h * bh).sum() + (h.T * W * v).sum()
 
         result = 0
         for h in list(itertools.product([0, 1], repeat=5)):
@@ -197,7 +199,7 @@ class RnnRbm:
         n_hidden=5,
         n_hidden_recurrent=10,
         lr=0.001,
-        dim=20,
+        dim=5,
         dt=0.3
     ):
         '''Constructs and compiles Theano functions for training and sequence
@@ -260,6 +262,7 @@ class RnnRbm:
         # dataset = [midiread(f, self.r,
         #                     self.dt).piano_roll.astype(theano.config.floatX)
         #            for f in files]
+        dataset = dataset.astype(theano.config.floatX)
 
         try:
             for epoch in xrange(num_epochs):
@@ -307,7 +310,7 @@ def test_rnnrbm(batch_size=10, num_epochs=10):
     model = RnnRbm()
     # re = os.path.join(os.path.split(os.path.dirname(__file__))[0],
     #                   'data', 'Nottingham', 'train', '*.mid')
-    dataset = dg.generate_one_node_dataset(100, 20)
+    dataset = dg.generate_multi_nodes_dataset(10, 100, 5)
     model.train(dataset, batch_size=batch_size, num_epochs=num_epochs)
     return model
 
