@@ -82,10 +82,10 @@ def build_rbm(v, W, bv, bh, k):
             vi_factorial, _ = theano.scan(fn=lambda vi: T.gamma(vi),
                                           outputs_info=None,
                                           sequences=v)
-            return - (v * bv).sum() - vi_factorial.sum() + (h * bh).sum() + (h.T * W * v).sum()
+            return - (v * bv).sum() - vi_factorial.sum() + (h * bh).sum()# + T.dot(T.dot(h.T, W), v).sum()
 
         result = 0
-        for h in list(itertools.product([0, 1], repeat=5)):
+        for h in list(itertools.product([0, 1], repeat=3)):
             result -= T.exp(-energy_func(v, numpy.array(h)))
         return result
 
@@ -196,10 +196,10 @@ class RnnRbm:
 
     def __init__(
         self,
-        n_hidden=5,
+        n_hidden=3,
         n_hidden_recurrent=10,
         lr=0.001,
-        dim=5,
+        dim=7,
         dt=0.3
     ):
         '''Constructs and compiles Theano functions for training and sequence
@@ -310,7 +310,7 @@ def test_rnnrbm(batch_size=10, num_epochs=10):
     model = RnnRbm()
     # re = os.path.join(os.path.split(os.path.dirname(__file__))[0],
     #                   'data', 'Nottingham', 'train', '*.mid')
-    dataset = dg.generate_multi_nodes_dataset(10, 100, 5)
+    dataset = dg.generate_multi_nodes_dataset(10, 100, 7)
     model.train(dataset, batch_size=batch_size, num_epochs=num_epochs)
     return model
 
