@@ -1,13 +1,9 @@
-# Author: Nicolas Boulanger-Lewandowski
-# University of Montreal (2012)
-# RNN-RBM deep learning tutorial
-# More information at http://deeplearning.net/tutorial/rnnrbm.html
-
 import glob
 import os
 import sys
-
+import itertools
 import numpy
+import data_generator as dg
 try:
     import pylab
 except ImportError:
@@ -16,7 +12,7 @@ except ImportError:
     )
     print "It can be installed with 'pip install -q Pillow'"
 
-from midi.utils import midiread, midiwrite
+# from midi.utils import midiread, midiwrite
 import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
@@ -55,24 +51,42 @@ def build_rbm(v, W, bv, bh, k):
         The `updates` object returned by scan.'''
 
     def gibbs_step(v):
-        mean_h = T.nnet.sigmoid(T.dot(v, W) + bh)
-        h = rng.binomial(size=mean_h.shape, n=1, p=mean_h,
-                         dtype=theano.config.floatX)
-        mean_v = T.nnet.sigmoid(T.dot(h, W.T) + bv)
-        v = rng.binomial(size=mean_v.shape, n=1, p=mean_v,
-                         dtype=theano.config.floatX)
-        return mean_v, v
+
+        # mean_h = T.nnet.sigmoid(T.dot(v, W) + bh)
+        # h = rng.binomial(size=mean_h.shape, n=1, p=mean_h,
+        #                  dtype=theano.config.floatX)
+        # mean_v = T.nnet.sigmoid(T.dot(h, W.T) + bv)
+        # v = rng.binomial(size=mean_v.shape, n=1, p=mean_v,
+        #                  dtype=theano.config.floatX)
+        poisson_lambda_h = T.log(bh) + T.dot(v, W)
+        h = rng.poisson(size=poisson_lambda_h.shape, lam=poisson_lambda_h, dtype=theano.config.floatX)
+        poisson_lambda_v = T.log(bv) + T.dot(h, W.T)
+        v = rng.poisson(size=poisson_lambda_v.shape, lam=poisson_lambda_v, dtype=theano.config.floatX)
+
+        return poisson_lambda_v, v
 
     chain, updates = theano.scan(lambda v: gibbs_step(v)[1], outputs_info=[v],
                                  n_steps=k)
     v_sample = chain[-1]
 
-    mean_v = gibbs_step(v_sample)[0]
-    monitor = T.xlogx.xlogy0(v, mean_v) + T.xlogx.xlogy0(1 - v, 1 - mean_v)
+    poisson_lambda_v = gibbs_step(v_sample)[0]
+    # monitor = T.xlogx.xlogy0(v, poisson_lambda_v) + T.xlogx.xlogy0(1 - v, 1 - poisson_lambda_v)
+    monitor = (v - poisson_lambda_v)**2
     monitor = monitor.sum() / v.shape[0]
 
     def free_energy(v):
-        return -(v * bv).sum() - T.log(1 + T.exp(T.dot(v, W) + bh)).sum()
+
+        def energy_func(v, h):
+            vi_factorial, _ = theano.scan(fn=lambda vi: T.gamma(vi),
+                                          outputs_info=None,
+                                          sequences=v)
+            return - (v * bh).sum() - vi_factorial.sum() + (h * bv).sum() + (h.T * W * v).sum()
+
+        result = 0
+        for h in list(itertools.product([0, 1], repeat=5)):
+            result -= T.exp(-energy_func(v, numpy.array(h)))
+        return result
+
     cost = (free_energy(v) - free_energy(v_sample)) / v.shape[0]
 
     return v_sample, cost, monitor, updates
@@ -180,10 +194,10 @@ class RnnRbm:
 
     def __init__(
         self,
-        n_hidden=150,
-        n_hidden_recurrent=100,
+        n_hidden=5,
+        n_hidden_recurrent=10,
         lr=0.001,
-        r=(21, 109),
+        dim=20,
         dt=0.3
     ):
         '''Constructs and compiles Theano functions for training and sequence
@@ -204,11 +218,11 @@ class RnnRbm:
             Sampling period when converting the MIDI files into piano-rolls, or
             equivalently the time difference between consecutive time steps.'''
 
-        self.r = r
+        self.dim = dim
         self.dt = dt
         (v, v_sample, cost, monitor, params, updates_train, v_t,
             updates_generate) = build_rnnrbm(
-                r[1] - r[0],
+                dim,
                 n_hidden,
                 n_hidden_recurrent
             )
@@ -228,7 +242,7 @@ class RnnRbm:
             updates=updates_generate
         )
 
-    def train(self, files, batch_size=100, num_epochs=200):
+    def train(self, dataset, batch_size=100, num_epochs=200):
         '''Train the RNN-RBM via stochastic gradient descent (SGD) using MIDI
         files converted to piano-rolls.
 
@@ -241,11 +255,11 @@ class RnnRbm:
             Number of epochs (pass over the training set) performed. The user
             can safely interrupt training with Ctrl+C at any time.'''
 
-        assert len(files) > 0, 'Training set is empty!' \
-                               ' (did you download the data files?)'
-        dataset = [midiread(f, self.r,
-                            self.dt).piano_roll.astype(theano.config.floatX)
-                   for f in files]
+        # assert len(files) > 0, 'Training set is empty!' \
+        #                        ' (did you download the data files?)'
+        # dataset = [midiread(f, self.r,
+        #                     self.dt).piano_roll.astype(theano.config.floatX)
+        #            for f in files]
 
         try:
             for epoch in xrange(num_epochs):
@@ -253,7 +267,10 @@ class RnnRbm:
                 costs = []
 
                 for s, sequence in enumerate(dataset):
+                    print "enumerate", s, sequence
                     for i in xrange(0, len(sequence), batch_size):
+                        print "train", i
+                        print sequence[i:i+batch_size]
                         cost = self.train_function(sequence[i:i + batch_size])
                         costs.append(cost)
 
@@ -274,9 +291,9 @@ class RnnRbm:
             If True, a piano-roll of the generated sequence will be shown.'''
 
         piano_roll = self.generate_function()
-        midiwrite(filename, piano_roll, self.r, self.dt)
+        midiwrite(filename, piano_roll, self.dim, self.dt)
         if show:
-            extent = (0, self.dt * len(piano_roll)) + self.r
+            extent = (0, self.dt * len(piano_roll)) + self.dim
             pylab.figure()
             pylab.imshow(piano_roll.T, origin='lower', aspect='auto',
                          interpolation='nearest', cmap=pylab.cm.gray_r,
@@ -286,16 +303,16 @@ class RnnRbm:
             pylab.title('generated piano-roll')
 
 
-def test_rnnrbm(batch_size=100, num_epochs=200):
+def test_rnnrbm(batch_size=10, num_epochs=10):
     model = RnnRbm()
-    re = os.path.join(os.path.split(os.path.dirname(__file__))[0],
-                      'data', 'Nottingham', 'train', '*.mid')
-    model.train(glob.glob(re),
-                batch_size=batch_size, num_epochs=num_epochs)
+    # re = os.path.join(os.path.split(os.path.dirname(__file__))[0],
+    #                   'data', 'Nottingham', 'train', '*.mid')
+    dataset = dg.generate_one_node_dataset(100, 20)
+    model.train(dataset, batch_size=batch_size, num_epochs=num_epochs)
     return model
 
 if __name__ == '__main__':
     model = test_rnnrbm()
-    model.generate('sample1.mid')
-    model.generate('sample2.mid')
-    pylab.show()
+    # model.generate('sample1.mid')
+    # model.generate('sample2.mid')
+    # pylab.show()
