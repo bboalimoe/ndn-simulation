@@ -1,9 +1,13 @@
+# Author: Nicolas Boulanger-Lewandowski
+# University of Montreal (2012)
+# RNN-RBM deep learning tutorial
+# More information at http://deeplearning.net/tutorial/rnnrbm.html
+
 import glob
 import os
 import sys
-import itertools
-import numpy
 import data_generator as dg
+import numpy
 try:
     import pylab
 except ImportError:
@@ -16,9 +20,6 @@ except ImportError:
 import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
-
-
-theano.config.exception_verbosity="high"
 
 #Don't use a python long as this don't work on 32 bits computers.
 numpy.random.seed(0xbeef)
@@ -54,41 +55,25 @@ def build_rbm(v, W, bv, bh, k):
         The `updates` object returned by scan.'''
 
     def gibbs_step(v):
+        mean_h = T.nnet.sigmoid(T.dot(v, W) + bh)
+        h = rng.binomial(size=mean_h.shape, n=1, p=mean_h, dtype=theano.config.floatX)
 
-        # mean_h = T.nnet.sigmoid(T.dot(v, W) + bh)
-        # h = rng.binomial(size=mean_h.shape, n=1, p=mean_h,
-        #                  dtype=theano.config.floatX)
-        # mean_v = T.nnet.sigmoid(T.dot(h, W.T) + bv)
-        # v = rng.binomial(size=mean_v.shape, n=1, p=mean_v,
-        #                  dtype=theano.config.floatX)
-        poisson_lambda_h = abs(T.dot(v, W)) + abs(bh)
-        h = rng.poisson(size=poisson_lambda_h.shape, lam=poisson_lambda_h, dtype=theano.config.floatX)
-        poisson_lambda_v = abs(T.dot(h, W)) + abs(bv)
-        v = rng.poisson(size=poisson_lambda_v.shape, lam=poisson_lambda_v, dtype=theano.config.floatX)
-
-        return poisson_lambda_v, v
+        # mean_v = (T.exp(T.dot(h, W.T) + bv)/T.exp(T.dot(h, W.T) + bv).sum()) #* v.sum()
+        mean_v = T.exp(T.dot(h, W.T) + bv)/T.exp(T.dot(h, W.T) + bv).sum() * v.sum()
+        v = rng.poisson(size=mean_v.shape, lam=mean_v, dtype=theano.config.floatX)
+        return mean_v, v, mean_h, h
 
     chain, updates = theano.scan(lambda v: gibbs_step(v)[1], outputs_info=[v], n_steps=k)
     v_sample = chain[-1]
 
-    poisson_lambda_v = gibbs_step(v_sample)[0]
-    # monitor = T.xlogx.xlogy0(v, poisson_lambda_v) + T.xlogx.xlogy0(1 - v, 1 - poisson_lambda_v)
-    monitor = (v - poisson_lambda_v)**2
-    monitor = monitor.sum() / v.shape[0]
+    mean_v, _, mean_h, h = gibbs_step(v_sample)
+    # monitor = T.xlogx.xlogy0(v, lam_v) + T.xlogx.xlogy0(1 - v, 1 - lam_v)
+    # monitor = mean_v
+    monitor = (v - mean_v)**2
+    monitor = monitor.sum()/v.shape[0]
 
     def free_energy(v):
-
-        def energy_func(v, h):
-            vi_factorial, _ = theano.scan(fn=lambda vi: T.gamma(vi),
-                                          outputs_info=None,
-                                          sequences=v)
-            return - (v * bv).sum() - vi_factorial.sum() + (h * bh).sum() + T.dot(W, h).sum()
-
-        result = 0
-        for h in list(itertools.product([0, 1], repeat=3)):
-            result -= T.exp(-energy_func(v, numpy.array(h)))
-        return result
-
+        return -(v * bv).sum() - T.log(1 + T.exp(T.dot(v, W) + bh)).sum()
     cost = (free_energy(v) - free_energy(v_sample)) / v.shape[0]
 
     return v_sample, cost, monitor, updates
@@ -196,10 +181,10 @@ class RnnRbm:
 
     def __init__(
         self,
-        n_hidden=3,
-        n_hidden_recurrent=10,
+        n_hidden=150,
+        n_hidden_recurrent=100,
         lr=0.001,
-        dim=7,
+        r=(21, 109),
         dt=0.3
     ):
         '''Constructs and compiles Theano functions for training and sequence
@@ -220,11 +205,11 @@ class RnnRbm:
             Sampling period when converting the MIDI files into piano-rolls, or
             equivalently the time difference between consecutive time steps.'''
 
-        self.dim = dim
+        self.r = r
         self.dt = dt
         (v, v_sample, cost, monitor, params, updates_train, v_t,
             updates_generate) = build_rnnrbm(
-                dim,
+                r[1] - r[0],
                 n_hidden,
                 n_hidden_recurrent
             )
@@ -263,22 +248,20 @@ class RnnRbm:
         #                     self.dt).piano_roll.astype(theano.config.floatX)
         #            for f in files]
         dataset = dataset.astype(theano.config.floatX)
-
+        print dataset
         try:
             for epoch in xrange(num_epochs):
                 numpy.random.shuffle(dataset)
                 costs = []
 
                 for s, sequence in enumerate(dataset):
-                    print "enumerate", s, sequence
                     for i in xrange(0, len(sequence), batch_size):
-                        print "train", i
-                        print sequence[i:i+batch_size]
                         cost = self.train_function(sequence[i:i + batch_size])
                         costs.append(cost)
 
                 print 'Epoch %i/%i' % (epoch + 1, num_epochs),
                 print numpy.mean(costs)
+                # print costs
                 sys.stdout.flush()
 
         except KeyboardInterrupt:
@@ -294,9 +277,9 @@ class RnnRbm:
             If True, a piano-roll of the generated sequence will be shown.'''
 
         piano_roll = self.generate_function()
-        midiwrite(filename, piano_roll, self.dim, self.dt)
+        midiwrite(filename, piano_roll, self.r, self.dt)
         if show:
-            extent = (0, self.dt * len(piano_roll)) + self.dim
+            extent = (0, self.dt * len(piano_roll)) + self.r
             pylab.figure()
             pylab.imshow(piano_roll.T, origin='lower', aspect='auto',
                          interpolation='nearest', cmap=pylab.cm.gray_r,
@@ -306,11 +289,13 @@ class RnnRbm:
             pylab.title('generated piano-roll')
 
 
-def test_rnnrbm(batch_size=10, num_epochs=10):
+def test_rnnrbm(batch_size=10, num_epochs=200):
     model = RnnRbm()
     # re = os.path.join(os.path.split(os.path.dirname(__file__))[0],
     #                   'data', 'Nottingham', 'train', '*.mid')
-    dataset = dg.generate_multi_nodes_dataset(10, 100, 7)
+    # model.train(glob.glob(re),
+    #             batch_size=batch_size, num_epochs=num_epochs)
+    dataset = dg.generate_multi_nodes_dataset(10, 10, 88)
     model.train(dataset, batch_size=batch_size, num_epochs=num_epochs)
     return model
 
